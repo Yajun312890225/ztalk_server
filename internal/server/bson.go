@@ -189,15 +189,17 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 			index += 4
 		case arrayValue:
 			index++
-			arryData, endindex, err := b.Get(buf[index:])
-			if err != nil {
-				return nil, 0, errors.New("arry error")
+			arryData := []map[string]interface{}{}
+			for buf[index] != endValue {
+				singleData, endindex, err := b.Get(buf[index:])
+				if err != nil {
+					return nil, 0, errors.New("arry error")
+				}
+				arryData = append(arryData, singleData)
+				index += endindex
 			}
 			data[name] = arryData
-			// for buf[index] != endValue {
-			// 	index++
-			// }
-			index += endindex + 1
+			index++
 		case binaryValue:
 			index++
 			var len int32

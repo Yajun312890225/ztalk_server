@@ -1,0 +1,10 @@
+syntax = "proto2";
+package rp;
+
+message friend
+{
+    required int64 userID = 1;
+    required bool contact = 2;    
+    required bool reg = 3;    
+    required string lastTime = 4;    
+}

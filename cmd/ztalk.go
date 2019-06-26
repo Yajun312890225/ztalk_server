@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"ztalk_server/internal/database"
 	"ztalk_server/internal/handler"
 	"ztalk_server/internal/server"
@@ -17,15 +16,6 @@ var ut = utils.NewUtils()
 var rootHandler = handler.NewHandler(ser, db, ut, redisConn)
 
 func main() {
-	// ser.Listening()
-
-	res, err := (*redisConn).Do("HMGET", "ZU_+8617600113331", "passwd", "nonce")
-	if err != nil {
-		fmt.Println("redis HGET error:", err)
-	} else {
-		for _, v := range res.([]interface{}) {
-			fmt.Printf("%s\n", v)
-		}
-	}
+	ser.Listening()
 
 }

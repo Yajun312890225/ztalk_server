@@ -79,7 +79,7 @@ func (m *Msf) ConnHandle(msf *Msf, sess *Session) {
 			continue
 		}
 		if ok := m.hook(sess.ID, cmdid, v); !ok {
-			log.Println("hook error")
+			log.Println("hook error cmdid " ,cmdid)
 		}
 	}
 

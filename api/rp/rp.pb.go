@@ -5,11 +5,12 @@ package rp
 
 import (
 	fmt "fmt"
-	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
-	proto "github.com/golang/protobuf/proto"
 	io "io"
 	math "math"
 	math_bits "math/bits"
+
+	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
+	proto "github.com/golang/protobuf/proto"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -25,9 +26,9 @@ const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
 type Friend struct {
 	UserID               *int64   `protobuf:"varint,1,req,name=userID" json:"userID,omitempty"`
-	Contact              *bool    `protobuf:"varint,2,req,name=contact" json:"contact,omitempty"`
-	Reg                  *bool    `protobuf:"varint,3,req,name=reg" json:"reg,omitempty"`
-	LastTime             *string  `protobuf:"bytes,4,req,name=lastTime" json:"lastTime,omitempty"`
+	Contact              *bool    `protobuf:"varint,3,req,name=contact" json:"contact,omitempty"`
+	Reg                  *bool    `protobuf:"varint,4,req,name=reg" json:"reg,omitempty"`
+	LastTime             *int64   `protobuf:"varint,5,req,name=lastTime" json:"lastTime,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -87,11 +88,11 @@ func (m *Friend) GetReg() bool {
 	return false
 }
 
-func (m *Friend) GetLastTime() string {
+func (m *Friend) GetLastTime() int64 {
 	if m != nil && m.LastTime != nil {
 		return *m.LastTime
 	}
-	return ""
+	return 0
 }
 
 func init() {
@@ -101,16 +102,16 @@ func init() {
 func init() { proto.RegisterFile("rp.proto", fileDescriptor_7732b359860a1f95) }
 
 var fileDescriptor_7732b359860a1f95 = []byte{
-	// 139 bytes of a gzipped FileDescriptorProto
+	// 136 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xe2, 0x28, 0x2a, 0xd0, 0x2b,
 	0x28, 0xca, 0x2f, 0xc9, 0x17, 0x62, 0x2a, 0x2a, 0x50, 0xca, 0xe0, 0x62, 0x4b, 0x2b, 0xca, 0x4c,
 	0xcd, 0x4b, 0x11, 0x12, 0xe3, 0x62, 0x2b, 0x2d, 0x4e, 0x2d, 0xf2, 0x74, 0x91, 0x60, 0x54, 0x60,
 	0xd2, 0x60, 0x0e, 0x82, 0xf2, 0x84, 0x24, 0xb8, 0xd8, 0x93, 0xf3, 0xf3, 0x4a, 0x12, 0x93, 0x4b,
-	0x24, 0x98, 0x14, 0x98, 0x34, 0x38, 0x82, 0x60, 0x5c, 0x21, 0x01, 0x2e, 0xe6, 0xa2, 0xd4, 0x74,
-	0x09, 0x66, 0xb0, 0x28, 0x88, 0x29, 0x24, 0xc5, 0xc5, 0x91, 0x93, 0x58, 0x5c, 0x12, 0x92, 0x99,
-	0x9b, 0x2a, 0xc1, 0xa2, 0xc0, 0xa4, 0xc1, 0x19, 0x04, 0xe7, 0x3b, 0x09, 0x9c, 0x78, 0x24, 0xc7,
-	0x78, 0xe1, 0x91, 0x1c, 0xe3, 0x83, 0x47, 0x72, 0x8c, 0x33, 0x1e, 0xcb, 0x31, 0x00, 0x02, 0x00,
-	0x00, 0xff, 0xff, 0x53, 0xf6, 0xba, 0xa2, 0x8a, 0x00, 0x00, 0x00,
+	0x24, 0x98, 0x15, 0x98, 0x34, 0x38, 0x82, 0x60, 0x5c, 0x21, 0x01, 0x2e, 0xe6, 0xa2, 0xd4, 0x74,
+	0x09, 0x16, 0xb0, 0x28, 0x88, 0x29, 0x24, 0xc5, 0xc5, 0x91, 0x93, 0x58, 0x5c, 0x12, 0x92, 0x99,
+	0x9b, 0x2a, 0xc1, 0x0a, 0x36, 0x05, 0xce, 0x77, 0x12, 0x38, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23,
+	0x39, 0xc6, 0x07, 0x8f, 0xe4, 0x18, 0x67, 0x3c, 0x96, 0x63, 0x00, 0x04, 0x00, 0x00, 0xff, 0xff,
+	0x4a, 0x7c, 0xd3, 0x51, 0x8a, 0x00, 0x00, 0x00,
 }
 
 func (m *Friend) Marshal() (dAtA []byte, err error) {
@@ -138,7 +139,7 @@ func (m *Friend) MarshalTo(dAtA []byte) (int, error) {
 	if m.Contact == nil {
 		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
-		dAtA[i] = 0x10
+		dAtA[i] = 0x18
 		i++
 		if *m.Contact {
 			dAtA[i] = 1
@@ -150,7 +151,7 @@ func (m *Friend) MarshalTo(dAtA []byte) (int, error) {
 	if m.Reg == nil {
 		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
-		dAtA[i] = 0x18
+		dAtA[i] = 0x20
 		i++
 		if *m.Reg {
 			dAtA[i] = 1
@@ -162,10 +163,9 @@ func (m *Friend) MarshalTo(dAtA []byte) (int, error) {
 	if m.LastTime == nil {
 		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
-		dAtA[i] = 0x22
+		dAtA[i] = 0x28
 		i++
-		i = encodeVarintRp(dAtA, i, uint64(len(*m.LastTime)))
-		i += copy(dAtA[i:], *m.LastTime)
+		i = encodeVarintRp(dAtA, i, uint64(*m.LastTime))
 	}
 	if m.XXX_unrecognized != nil {
 		i += copy(dAtA[i:], m.XXX_unrecognized)
@@ -198,8 +198,7 @@ func (m *Friend) Size() (n int) {
 		n += 2
 	}
 	if m.LastTime != nil {
-		l = len(*m.LastTime)
-		n += 1 + l + sovRp(uint64(l))
+		n += 1 + sovRp(uint64(*m.LastTime))
 	}
 	if m.XXX_unrecognized != nil {
 		n += len(m.XXX_unrecognized)
@@ -264,7 +263,7 @@ func (m *Friend) Unmarshal(dAtA []byte) error {
 			}
 			m.UserID = &v
 			hasFields[0] |= uint64(0x00000001)
-		case 2:
+		case 3:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Contact", wireType)
 			}
@@ -286,7 +285,7 @@ func (m *Friend) Unmarshal(dAtA []byte) error {
 			b := bool(v != 0)
 			m.Contact = &b
 			hasFields[0] |= uint64(0x00000002)
-		case 3:
+		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Reg", wireType)
 			}
@@ -308,11 +307,11 @@ func (m *Friend) Unmarshal(dAtA []byte) error {
 			b := bool(v != 0)
 			m.Reg = &b
 			hasFields[0] |= uint64(0x00000004)
-		case 4:
-			if wireType != 2 {
+		case 5:
+			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field LastTime", wireType)
 			}
-			var stringLen uint64
+			var v int64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowRp
@@ -322,25 +321,12 @@ func (m *Friend) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				v |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthRp
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthRp
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			s := string(dAtA[iNdEx:postIndex])
-			m.LastTime = &s
-			iNdEx = postIndex
+			m.LastTime = &v
 			hasFields[0] |= uint64(0x00000008)
 		default:
 			iNdEx = preIndex

@@ -164,12 +164,61 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 		return nil, 0, errors.New("data error")
 	}
 	index++
-	for buf[index] == stridxValue {
-		index++
-		name := b.bsonGetIdx[buf[index]]
-		index++
-		switch buf[index] {
-		case stringValue:
+	for {
+		if buf[index] == stridxValue {
+			index++
+			name := b.bsonGetIdx[buf[index]]
+			index++
+			switch buf[index] {
+			case stringValue:
+				index++
+				strCount := 0
+				startIndex := index
+				for buf[index] != 0 {
+					strCount++
+					index++
+				}
+				by := bytes.NewBuffer(buf[startIndex : startIndex+strCount])
+				data[name] = by.String()
+				index++
+			case intValue:
+				index++
+				var v int32
+				by := bytes.NewBuffer(buf[index : index+4])
+				binary.Read(by, binary.LittleEndian, &v)
+				data[name] = int(v)
+				index += 4
+			case arrayValue:
+				index++
+				if buf[index] == endValue {
+					data[name] = []interface{}{}
+					index++
+				} else {
+					arryData, endindex, err := b.Get(buf[index:])
+					if err != nil {
+						return nil, 0, errors.New("arry error")
+					}
+					data[name] = arryData
+					index += endindex + 1
+				}
+
+				// for buf[index] != endValue {
+				// 	index++
+				// }
+
+			case binaryValue:
+				index++
+				var len int32
+				by := bytes.NewBuffer(buf[index : index+4])
+				binary.Read(by, binary.LittleEndian, &len)
+				index += 4
+				bin := buf[index : index+int(len)]
+				data[name] = bin
+				index += int(len)
+			default:
+				return nil, 0, errors.New("value error")
+			}
+		} else if buf[index] == stringValue {
 			index++
 			strCount := 0
 			startIndex := index
@@ -178,40 +227,35 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 				index++
 			}
 			by := bytes.NewBuffer(buf[startIndex : startIndex+strCount])
-			data[name] = by.String()
+			name := by.String()
 			index++
-		case intValue:
-			index++
-			var v int32
-			by := bytes.NewBuffer(buf[index : index+4])
-			binary.Read(by, binary.LittleEndian, &v)
-			data[name] = int(v)
-			index += 4
-		case arrayValue:
-			index++
-			arryData := []map[string]interface{}{}
-			for buf[index] != endValue {
-				singleData, endindex, err := b.Get(buf[index:])
-				if err != nil {
-					return nil, 0, errors.New("arry error")
+			if buf[index] == arrayValue {
+				index++
+				arryData := []interface{}{}
+				for buf[index] != endValue {
+					switch buf[index] {
+					case stringValue:
+						index++
+						strCount := 0
+						startIndex := index
+						for buf[index] != 0 {
+							strCount++
+							index++
+						}
+						by := bytes.NewBuffer(buf[startIndex : startIndex+strCount])
+						arryData = append(arryData, by.String())
+						index++
+					default:
+
+					}
 				}
-				arryData = append(arryData, singleData)
-				index += endindex
+				data[name] = arryData
+				index++
 			}
-			data[name] = arryData
-			index++
-		case binaryValue:
-			index++
-			var len int32
-			by := bytes.NewBuffer(buf[index : index+4])
-			binary.Read(by, binary.LittleEndian, &len)
-			index += 4
-			bin := buf[index : index+int(len)]
-			data[name] = bin
-			index += int(len)
-		default:
-			return nil, 0, errors.New("value error")
+		} else {
+			break
 		}
+
 	}
 	if buf[index] != endValue {
 		return nil, 0, errors.New("end error")

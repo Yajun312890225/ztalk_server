@@ -3,11 +3,14 @@ package handler
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"time"
+	"ztalk_server/api/rp"
 	"ztalk_server/internal/database"
 	"ztalk_server/internal/server"
 	"ztalk_server/internal/utils"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -96,8 +99,9 @@ func NewHandler(msf *server.Msf, db *database.DB, ut *utils.Ut, red *redis.Conn)
 		redisConn: red,
 	}
 	msf.EventPool.Register(auth, handler.authMessage)
-	msf.EventPool.Register(reqC2Cmsg, handler.c2cMessage)
 	msf.EventPool.Register(reqSyncContact, handler.syncContact)
+	msf.EventPool.Register(reqUserinfo, handler.userInfo)
+	msf.EventPool.Register(reqC2Cmsg, handler.c2cMessage)
 	return &handler
 }
 
@@ -148,15 +152,14 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 	// 	}
 	// }
 
-	res, err := (*h.redisConn).Do("HMGET", "ZU_"+phone, "passwd", "nonce")
+	res, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZU_"+phone, "passwd", "nonce"))
 	if err != nil {
 		fmt.Println("redis HGET error:", err)
 	} else {
-		if r, ok := res.([]interface{}); ok {
-			password = r[0].(string)
-			nonce = r[1].(string)
-		}
+		password = string(res[0])
+		nonce = string(res[1])
 	}
+
 	var checksign string
 	if ty == 1 {
 		checksign = fmt.Sprintf("%s%s%02x%s", phone, source, []byte(password), key)
@@ -185,10 +188,6 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, challenge))
 	} else if ty == 0 {
 		result["time"] = int(time.Now().Unix())
-		type resSt struct {
-			ip   string
-			port int
-		}
 		result["ext0"] = []map[string]interface{}{
 			{"ext1": "192.168.0.98", "ext2": 9000},
 		}
@@ -209,7 +208,19 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 				return false
 			}
 		}
-		fmt.Println(result)
+		//redis userEx
+		var nickname, iconresid, sdesc string
+		qus = fmt.Sprintf("SELECT fNickname,fIconresid,fSdesc FROM tuser WHERE fPhone='%s'", phone)
+		err = h.db.QueryOne(qus).Scan(&nickname, &iconresid, &sdesc)
+		if err != nil {
+			log.Printf("scan failed, err:%v\n", err)
+			return false
+		}
+		_, err = (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", nickname, "iconresid", iconresid, "sdesc", sdesc, "logintime", time.Now().Unix(), "online", true)
+		if err != nil {
+			log.Println("redis HGET error:", err)
+		}
+		log.Println(result)
 		h.msf.SessionMaster.SetPhoneByID(fd, phone)
 		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, succ))
 	}
@@ -232,11 +243,23 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 		if add, ok := reqData["add"].([]map[string]interface{}); ok {
 			for _, arry := range add {
 				if friendPhone, ok := arry["phone"].(string); ok {
-					var friendUserID int
+					var friendUserID int64
 					s := fmt.Sprintf("SELECT fUserId FROM tuser WHERE fPhone='%s'", friendPhone)
 					err := h.db.QueryOne(s).Scan(&friendUserID)
 					if err != nil {
 						log.Printf("User not exist\n")
+						//redis friend reg == false
+						friend := &rp.Friend{
+							UserID:   proto.Int64(-1),
+							Contact:  proto.Bool(true),
+							Reg:      proto.Bool(false),
+							LastTime: proto.Int64(time.Now().Unix()),
+						}
+						d, _ := proto.Marshal(friend)
+						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						if err != nil {
+							log.Println("redis HGET error:", err)
+						}
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "friend", time.Now().Unix(), "friend", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
@@ -244,6 +267,19 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 							result["in"] = append(result["in"].([]map[string]interface{}), map[string]interface{}{
 								"phone": friendPhone,
 							})
+
+							friend := &rp.Friend{
+								UserID:   proto.Int64(friendUserID),
+								Contact:  proto.Bool(true),
+								Reg:      proto.Bool(true),
+								LastTime: proto.Int64(time.Now().Unix()),
+							}
+							d, _ := proto.Marshal(friend)
+							_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+							if err != nil {
+								log.Println("redis HGET error:", err)
+							}
+
 						}
 					}
 				}
@@ -252,21 +288,131 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 		if del, ok := reqData["del"].([]map[string]interface{}); ok {
 			for _, arry := range del {
 				if friendPhone, ok := arry["phone"].(string); ok {
-					var friendUserID int
+					var friendUserID int64
 					s := fmt.Sprintf("SELECT fUserId FROM tuser WHERE fPhone='%s'", friendPhone)
 					err := h.db.QueryOne(s).Scan(&friendUserID)
 					if err != nil {
 						log.Printf("User not exist\n")
+						friend := &rp.Friend{
+							UserID:   proto.Int64(-1),
+							Contact:  proto.Bool(false),
+							Reg:      proto.Bool(false),
+							LastTime: proto.Int64(time.Now().Unix()),
+						}
+						d, _ := proto.Marshal(friend)
+						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						if err != nil {
+							log.Println("redis HSET error:", err)
+						}
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "deleted", time.Now().Unix(), "deleted", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("Contact update")
+							friend := &rp.Friend{
+								UserID:   proto.Int64(friendUserID),
+								Contact:  proto.Bool(false),
+								Reg:      proto.Bool(true),
+								LastTime: proto.Int64(time.Now().Unix()),
+							}
+							d, _ := proto.Marshal(friend)
+							_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+							if err != nil {
+								log.Println("redis HGET error:", err)
+							}
 						}
 					}
 				}
 			}
 		}
 		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSyncContact))
+		return true
+	}
+	return false
+}
+
+func (h *Handler) userInfo(fd uint32, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	result := make(map[string]interface{})
+	if phone, ok := reqData["phone"].(string); ok {
+
+		lasttime, ok := reqData["lasttime"].(string)
+		if ok == false {
+			log.Println("get lasttime error")
+			return false
+		}
+
+		data, err := redis.ByteSlices((*h.redisConn).Do("HGETALL", "ZUC_"+phone))
+		if err != nil {
+			log.Println("redis HGET error:", err)
+			return false
+		}
+		result["userlist"] = []map[string]interface{}{}
+		for i := 0; i < len(data); i++ {
+			// for _, friendData := range data {
+			friendPhone := string(data[i])
+			i++
+			friend := &rp.Friend{}
+			err := proto.Unmarshal(data[i], friend)
+			if err != nil {
+				log.Println("proto Unmarshal error:", err)
+			}
+			if *friend.Contact && *friend.Reg {
+				if timestamp, err := strconv.ParseInt(lasttime, 10, 64); err == nil && timestamp >= *friend.LastTime {
+					userProfile, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+friendPhone, "iconresid", "sdesc"))
+					if err != nil {
+						log.Println("redis HGET error:", err)
+						return false
+					}
+					result["userlist"] = append(result["userlist"].([]map[string]interface{}), map[string]interface{}{
+						"phone": friendPhone,
+						"icon":  string(userProfile[0]),
+						"sdesc": string(userProfile[1]),
+					})
+				}
+			}
+
+		}
+		result["lasttime"] = strconv.FormatInt(time.Now().Unix(), 10)
+		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUSerinfo))
+	}
+
+	return false
+}
+func (h *Handler) userState(fd uint32, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	result := make(map[string]interface{})
+	if _, ok := reqData["phone"].(string); ok {
+		result["userstate"] = []map[string]interface{}{}
+		if contacts, ok := reqData["contacts"].([]string); ok {
+			for _, contact := range contacts {
+				user, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+contact, "setonline", "logouttime", "online"))
+				if err != nil {
+					log.Println("redis HGET error:", err)
+					return false
+				}
+				if string(user[0]) == "0" {
+					result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
+						"phone":  contact,
+						"status": -1,
+					})
+				} else {
+					if online, err := redis.Bool(user[3], err); err == nil && online {
+						result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
+							"phone":  contact,
+							"status": 0,
+						})
+					} else {
+						if logouttime, err := redis.Int64(user[2], err); err == nil {
+							result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
+								"phone":  contact,
+								"status": int(logouttime),
+							})
+						}
+					}
+				}
+			}
+		}
+		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUserState))
 		return true
 	}
 	return false

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path"
 	"runtime"
@@ -136,6 +137,35 @@ func (b *Bson) transFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
 		case map[string]interface{}:
 			by := b.transFromMap(&v)
 			obj.Write(by.Bytes())
+		case []interface{}:
+			obj.WriteByte(arrayValue)
+			if len(v) != 0 {
+				for _, arr := range v {
+					switch t := arr.(type) {
+					case string:
+						obj.WriteByte(stringValue)
+						obj.WriteString(t)
+						obj.WriteByte(0)
+					case int:
+						obj.WriteByte(intValue)
+						buf := new(bytes.Buffer)
+						v32 := int32(t)
+						binary.Write(buf, binary.LittleEndian, &v32)
+						obj.Write(buf.Bytes())
+					case byte:
+						obj.WriteByte(byteValue)
+						obj.WriteByte(t)
+					default:
+						log.Println("set single array type need to repaire")
+						obj.WriteByte(nullValue)
+					}
+				}
+				obj.WriteByte(endValue)
+			} else {
+				obj.WriteByte(objectValue)
+				obj.WriteByte(endValue)
+			}
+			obj.WriteByte(endValue)
 		case []map[string]interface{}:
 			obj.WriteByte(arrayValue)
 			if len(v) != 0 {
@@ -194,18 +224,53 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 					data[name] = []interface{}{}
 					index++
 				} else {
-					arryData, endindex, err := b.Get(buf[index:])
-					if err != nil {
-						return nil, 0, errors.New("arry error")
+
+					if buf[index] == objectValue {
+						arryData, endindex, err := b.Get(buf[index:])
+						if err != nil {
+							return nil, 0, errors.New("arry error")
+						}
+						data[name] = arryData
+						index += endindex + 1
+					} else {
+						arryData := []interface{}{}
+						for buf[index] != endValue {
+							switch buf[index] {
+							case stringValue:
+								index++
+								strCount := 0
+								startIndex := index
+								for buf[index] != 0 {
+									strCount++
+									index++
+								}
+								by := bytes.NewBuffer(buf[startIndex : startIndex+strCount])
+								arryData = append(arryData, by.String())
+								index++
+							case intValue:
+								index++
+								var v int32
+								by := bytes.NewBuffer(buf[index : index+4])
+								binary.Read(by, binary.LittleEndian, &v)
+								arryData = append(arryData, int(v))
+								index += 4
+							case binaryValue:
+								index++
+								var len int32
+								by := bytes.NewBuffer(buf[index : index+4])
+								binary.Read(by, binary.LittleEndian, &len)
+								index += 4
+								bin := buf[index : index+int(len)]
+								arryData = append(arryData, bin)
+								index += int(len)
+							default:
+								return nil, 0, errors.New("get single array type need to repaire")
+							}
+						}
+						data[name] = arryData
+						index++
 					}
-					data[name] = arryData
-					index += endindex + 1
 				}
-
-				// for buf[index] != endValue {
-				// 	index++
-				// }
-
 			case binaryValue:
 				index++
 				var len int32

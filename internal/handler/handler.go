@@ -239,7 +239,7 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 			log.Printf("scan failed, err:%v\n", err)
 			return false
 		}
-		result["in"] = []map[string]interface{}{}
+		result["in"] = []interface{}{}
 		if add, ok := reqData["add"].([]map[string]interface{}); ok {
 			for _, arry := range add {
 				if friendPhone, ok := arry["phone"].(string); ok {
@@ -264,10 +264,7 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "friend", time.Now().Unix(), "friend", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("Contact update")
-							result["in"] = append(result["in"].([]map[string]interface{}), map[string]interface{}{
-								"phone": friendPhone,
-							})
-
+							result["in"] = append(result["in"].([]interface{}), friendPhone)
 							friend := &rp.Friend{
 								UserID:   proto.Int64(friendUserID),
 								Contact:  proto.Bool(true),

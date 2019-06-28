@@ -42,7 +42,7 @@ const (
 	reqheart
 	sidClose
 	rptReadmsg
-	notifymsg
+	notifySetuser
 	reqMyblock
 	rspMyblock
 	reqSetblock
@@ -101,6 +101,9 @@ func NewHandler(msf *server.Msf, db *database.DB, ut *utils.Ut, red *redis.Conn)
 	msf.EventPool.Register(auth, handler.authMessage)
 	msf.EventPool.Register(reqSyncContact, handler.syncContact)
 	msf.EventPool.Register(reqUserinfo, handler.userInfo)
+	msf.EventPool.Register(reqUserState, handler.userState)
+	msf.EventPool.Register(reqSetUser, handler.setUser)
+	msf.EventPool.Register(reqSelfInfo, handler.selfInfo)
 	msf.EventPool.Register(reqC2Cmsg, handler.c2cMessage)
 	return &handler
 }
@@ -239,10 +242,10 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 			log.Printf("scan failed, err:%v\n", err)
 			return false
 		}
-		result["in"] = []interface{}{}
-		if add, ok := reqData["add"].([]map[string]interface{}); ok {
+		result["in"] = []map[string]interface{}{}
+		if add, ok := reqData["add"].([]interface{}); ok {
 			for _, arry := range add {
-				if friendPhone, ok := arry["phone"].(string); ok {
+				if friendPhone, ok := arry.(string); ok {
 					var friendUserID int64
 					s := fmt.Sprintf("SELECT fUserId FROM tuser WHERE fPhone='%s'", friendPhone)
 					err := h.db.QueryOne(s).Scan(&friendUserID)
@@ -264,7 +267,9 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "friend", time.Now().Unix(), "friend", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("Contact update")
-							result["in"] = append(result["in"].([]interface{}), friendPhone)
+							result["in"] = append(result["in"].([]map[string]interface{}), map[string]interface{}{
+								"phone": friendPhone,
+							})
 							friend := &rp.Friend{
 								UserID:   proto.Int64(friendUserID),
 								Contact:  proto.Bool(true),
@@ -282,9 +287,9 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 				}
 			}
 		}
-		if del, ok := reqData["del"].([]map[string]interface{}); ok {
+		if del, ok := reqData["del"].([]interface{}); ok {
 			for _, arry := range del {
-				if friendPhone, ok := arry["phone"].(string); ok {
+				if friendPhone, ok := arry.(string); ok {
 					var friendUserID int64
 					s := fmt.Sprintf("SELECT fUserId FROM tuser WHERE fPhone='%s'", friendPhone)
 					err := h.db.QueryOne(s).Scan(&friendUserID)
@@ -354,7 +359,7 @@ func (h *Handler) userInfo(fd uint32, reqData map[string]interface{}) bool {
 				log.Println("proto Unmarshal error:", err)
 			}
 			if *friend.Contact && *friend.Reg {
-				if timestamp, err := strconv.ParseInt(lasttime, 10, 64); err == nil && timestamp >= *friend.LastTime {
+				if timestamp, err := strconv.ParseInt(lasttime, 10, 64); err == nil && timestamp < *friend.LastTime {
 					userProfile, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+friendPhone, "iconresid", "sdesc"))
 					if err != nil {
 						log.Println("redis HGET error:", err)
@@ -371,6 +376,7 @@ func (h *Handler) userInfo(fd uint32, reqData map[string]interface{}) bool {
 		}
 		result["lasttime"] = strconv.FormatInt(time.Now().Unix(), 10)
 		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUSerinfo))
+		return true
 	}
 
 	return false
@@ -410,6 +416,137 @@ func (h *Handler) userState(fd uint32, reqData map[string]interface{}) bool {
 			}
 		}
 		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUserState))
+		return true
+	}
+	return false
+}
+
+func (h *Handler) setUser(fd uint32, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	if phone, ok := reqData["phone"].(string); ok {
+		result := make(map[string]interface{})
+		result["items"] = []map[string]interface{}{}
+		if items, ok := reqData["items"].([]map[string]interface{}); ok {
+			userData := map[string]string{}
+			for _, item := range items {
+				name, ok := item["name"].(string)
+				if ok == false {
+					log.Println("name error")
+				}
+				value, ok := item["value"].(string)
+				if ok == false {
+					log.Println("value error")
+				}
+				userData[name] = value
+			}
+			e := fmt.Sprintf("UPDATE tuser SET fNickname='%s', fIconresid='%s' , fSdesc='%s' WHERE fPhone='%s'", userData["nick"], userData["icon"], userData["sdesc"], phone)
+			ok = h.db.UpdateData(e)
+			if ok == false {
+				log.Println("set user error")
+				return false
+			}
+			_, err := (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", userData["nick"], "iconresid", userData["icon"], "sdesc", userData["sdesc"])
+			if err != nil {
+				log.Println("redis HMSET error:", err)
+				return false
+			}
+
+			for k, v := range userData {
+				result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+					"name":  k,
+					"value": v,
+				})
+			}
+		}
+		result["phone"] = phone
+		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSetUser))
+
+		//notify_setUser
+		q := fmt.Sprintf("SELECT fUserId, fPhone FROM tcontact t1,tuser t2 WHERE t1.fUserId = t2.fUserId  AND t1.fContactType ='friend' AND t1.fFriendUserId IN (SELECT fUserId FROM tuser WHERE fPhone = '%s' )", "+8617600113331")
+		rows, err := h.db.Query(q)
+		if err != nil {
+			log.Printf("Query failed,err:%v", err)
+		}
+		phoneList := []string{}
+		userIDList := []int64{}
+		for rows.Next() {
+			var friendPhone string
+			var friendUserID int64
+			err = rows.Scan(&friendUserID, &friendPhone)
+			if err != nil {
+				fmt.Printf("Scan failed,err:%v", err)
+				return false
+			}
+			userIDList = append(userIDList, friendUserID)
+			phoneList = append(phoneList, friendPhone)
+		}
+		fmt.Println(phoneList)
+		for index, distphone := range phoneList {
+			friend := &rp.Friend{
+				UserID:   proto.Int64(userIDList[index]),
+				Contact:  proto.Bool(true),
+				Reg:      proto.Bool(true),
+				LastTime: proto.Int64(time.Now().Unix()),
+			}
+			d, _ := proto.Marshal(friend)
+			_, err := (*h.redisConn).Do("HSET", "ZUC_"+distphone, phone, d)
+			if err != nil {
+				log.Println("redis HGET error:", err)
+				return false
+			}
+
+			distMsg := map[string]interface{}{
+				"lasttime": strconv.FormatInt(time.Now().Unix(), 10),
+				"phone":    phone,
+				"items":    result["items"],
+			}
+			h.msf.SessionMaster.WriteByPhone(distphone, h.msf.BsonData.Set(distMsg, notifySetuser))
+		}
+		return true
+	}
+	return false
+}
+
+func (h *Handler) selfInfo(fd uint32, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	if phone, ok := reqData["phone"].(string); ok {
+		result := make(map[string]interface{})
+		result["items"] = []map[string]interface{}{}
+		if items, ok := reqData["items"].([]map[string]interface{}); ok {
+			userProfile, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+phone, "nickname", "iconresid", "sdesc"))
+			if err != nil {
+				log.Println("redis HGET error:", err)
+				return false
+			}
+			for _, item := range items {
+				name, ok := item["name"].(string)
+				if ok == false {
+					log.Println("name error")
+				}
+				switch name {
+				case "nick":
+					result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+						"name":  name,
+						"value": string(userProfile[0]),
+					})
+
+				case "icon":
+					result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+						"name":  name,
+						"value": string(userProfile[1]),
+					})
+				case "sdesc":
+					result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+						"name":  name,
+						"value": string(userProfile[2]),
+					})
+				default:
+					log.Println("items name error")
+				}
+			}
+		}
+		result["phone"] = phone
+		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSelfInfo))
 		return true
 	}
 	return false

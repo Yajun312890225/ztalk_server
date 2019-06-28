@@ -137,6 +137,15 @@ func (b *Bson) transFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
 		case map[string]interface{}:
 			by := b.transFromMap(&v)
 			obj.Write(by.Bytes())
+		case []map[string]interface{}:
+			obj.WriteByte(arrayValue)
+			if len(v) != 0 {
+				for _, arr := range v {
+					by := b.transFromMap(&arr)
+					obj.Write(by.Bytes())
+				}
+			}
+			obj.WriteByte(endValue)
 		case []interface{}:
 			obj.WriteByte(arrayValue)
 			if len(v) != 0 {
@@ -161,23 +170,9 @@ func (b *Bson) transFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
 					}
 				}
 				obj.WriteByte(endValue)
-			} else {
-				obj.WriteByte(objectValue)
-				obj.WriteByte(endValue)
 			}
 			obj.WriteByte(endValue)
-		case []map[string]interface{}:
-			obj.WriteByte(arrayValue)
-			if len(v) != 0 {
-				for _, arr := range v {
-					by := b.transFromMap(&arr)
-					obj.Write(by.Bytes())
-				}
-			} else {
-				obj.WriteByte(objectValue)
-				obj.WriteByte(endValue)
-			}
-			obj.WriteByte(endValue)
+
 		default:
 			obj.WriteByte(nullValue)
 		}
@@ -200,6 +195,11 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 			name := b.bsonGetIdx[buf[index]]
 			index++
 			switch buf[index] {
+			case stridxValue:
+				index++
+				vname := b.bsonGetIdx[buf[index]]
+				data[name] = vname
+				index++
 			case stringValue:
 				index++
 				strCount := 0
@@ -224,14 +224,18 @@ func (b *Bson) Get(buf []byte) (map[string]interface{}, int, error) {
 					data[name] = []interface{}{}
 					index++
 				} else {
-
 					if buf[index] == objectValue {
-						arryData, endindex, err := b.Get(buf[index:])
-						if err != nil {
-							return nil, 0, errors.New("arry error")
+						arrayData := []map[string]interface{}{}
+						for buf[index] != endValue {
+							tmpData, endindex, err := b.Get(buf[index:])
+							if err != nil {
+								return nil, 0, errors.New("arry error")
+							}
+							arrayData = append(arrayData, tmpData)
+							index += endindex
 						}
-						data[name] = arryData
-						index += endindex + 1
+						data[name] = arrayData
+						index++
 					} else {
 						arryData := []interface{}{}
 						for buf[index] != endValue {

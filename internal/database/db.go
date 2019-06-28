@@ -34,8 +34,13 @@ func NewDB() *DB {
 }
 
 //QueryOne query
-func (d *DB) QueryOne(quertString string) *sql.Row {
-	return d.db.QueryRow(quertString)
+func (d *DB) QueryOne(q string) *sql.Row {
+	return d.db.QueryRow(q)
+}
+
+//Query queryMulti
+func (d *DB) Query(q string) (*sql.Rows, error) {
+	return d.db.Query(q)
 }
 
 //UpdateData update

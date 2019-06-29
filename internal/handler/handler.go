@@ -108,7 +108,7 @@ func NewHandler(msf *server.Msf, db *database.DB, ut *utils.Ut, red *redis.Conn)
 	return &handler
 }
 
-func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) authMessage(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	var ok bool
 	var ty int
@@ -139,25 +139,26 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 		log.Println("source error")
 		return false
 	}
-	// if ty != 1 {
-	// 	qus := fmt.Sprintf("SELECT fPassword , fNonce FROM tuser WHERE fPhone='%s'", phone)
-	// 	err := h.db.QueryOne(qus).Scan(&password, &nonce)
-	// 	if err != nil {
-	// 		log.Printf("scan failed, err:%v\n", err)
-	// 		return false
-	// 	}
-	// } else {
-	// 	qus := fmt.Sprintf("SELECT fPassword FROM tuser WHERE fPhone='%s'", phone)
-	// 	err := h.db.QueryOne(qus).Scan(&password)
-	// 	if err != nil {
-	// 		log.Printf("scan failed, err:%v\n", err)
-	// 		return false
-	// 	}
-	// }
 
 	res, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZU_"+phone, "passwd", "nonce"))
 	if err != nil {
 		fmt.Println("redis HGET error:", err)
+
+		if ty != 1 {
+			qus := fmt.Sprintf("SELECT fPassword , fNonce FROM tuser WHERE fPhone='%s'", phone)
+			err := h.db.QueryOne(qus).Scan(&password, &nonce)
+			if err != nil {
+				log.Printf("scan failed, err:%v\n", err)
+				return false
+			}
+		} else {
+			qus := fmt.Sprintf("SELECT fPassword FROM tuser WHERE fPhone='%s'", phone)
+			err := h.db.QueryOne(qus).Scan(&password)
+			if err != nil {
+				log.Printf("scan failed, err:%v\n", err)
+				return false
+			}
+		}
 	} else {
 		password = string(res[0])
 		nonce = string(res[1])
@@ -172,7 +173,7 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 
 	if md5sign != h.ut.Md5(checksign) {
 		result["desc"] = "sign error"
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, fail))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, fail))
 		return true
 	}
 	newNonce := h.ut.GetNonce()
@@ -183,12 +184,12 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 		log.Println("update nonce error")
 		return false
 	}
-	_, err = (*h.redisConn).Do("HSET", "ZU_"+phone, "nonce", newNonce)
+	_, err = (*h.redisConn).Do("HMSET", "ZU_"+phone, "passwd", password, "nonce", newNonce)
 	if err != nil {
 		log.Println("redis HGET error:", err)
 	}
 	if ty == 1 {
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, challenge))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, challenge))
 	} else if ty == 0 {
 		result["time"] = int(time.Now().Unix())
 		result["ext0"] = []map[string]interface{}{
@@ -221,17 +222,17 @@ func (h *Handler) authMessage(fd uint32, reqData map[string]interface{}) bool {
 		}
 		_, err = (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", nickname, "iconresid", iconresid, "sdesc", sdesc, "logintime", time.Now().Unix(), "online", true)
 		if err != nil {
-			log.Println("redis HGET error:", err)
+			log.Println("redis HSETZUR error:", err)
 		}
 		log.Println(result)
-		h.msf.SessionMaster.SetPhoneByID(fd, phone)
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, succ))
+		h.msf.SessionMaster.SetPhoneByCID(cid, phone)
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, succ))
 	}
 
 	return true
 }
 
-func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	result := make(map[string]interface{})
 	if phone, ok := reqData["phone"].(string); ok {
@@ -326,13 +327,13 @@ func (h *Handler) syncContact(fd uint32, reqData map[string]interface{}) bool {
 				}
 			}
 		}
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSyncContact))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspSyncContact))
 		return true
 	}
 	return false
 }
 
-func (h *Handler) userInfo(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) userInfo(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	result := make(map[string]interface{})
 	if phone, ok := reqData["phone"].(string); ok {
@@ -375,13 +376,13 @@ func (h *Handler) userInfo(fd uint32, reqData map[string]interface{}) bool {
 
 		}
 		result["lasttime"] = strconv.FormatInt(time.Now().Unix(), 10)
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUSerinfo))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspUSerinfo))
 		return true
 	}
 
 	return false
 }
-func (h *Handler) userState(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) userState(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	result := make(map[string]interface{})
 	if _, ok := reqData["phone"].(string); ok {
@@ -415,13 +416,13 @@ func (h *Handler) userState(fd uint32, reqData map[string]interface{}) bool {
 				}
 			}
 		}
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspUserState))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspUserState))
 		return true
 	}
 	return false
 }
 
-func (h *Handler) setUser(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) setUser(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {
 		result := make(map[string]interface{})
@@ -459,13 +460,14 @@ func (h *Handler) setUser(fd uint32, reqData map[string]interface{}) bool {
 			}
 		}
 		result["phone"] = phone
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSetUser))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspSetUser))
 
 		//notify_setUser
-		q := fmt.Sprintf("SELECT fUserId, fPhone FROM tcontact t1,tuser t2 WHERE t1.fUserId = t2.fUserId  AND t1.fContactType ='friend' AND t1.fFriendUserId IN (SELECT fUserId FROM tuser WHERE fPhone = '%s' )", "+8617600113331")
+		q := fmt.Sprintf("SELECT t2.fUserId, t2.fPhone FROM tcontact t1,tuser t2 WHERE t1.fUserId = t2.fUserId  AND t1.fContactType ='friend' AND t1.fFriendUserId IN (SELECT fUserId FROM tuser WHERE fPhone = '%s' )", "+8617600113331")
 		rows, err := h.db.Query(q)
 		if err != nil {
 			log.Printf("Query failed,err:%v", err)
+			return false
 		}
 		phoneList := []string{}
 		userIDList := []int64{}
@@ -480,7 +482,7 @@ func (h *Handler) setUser(fd uint32, reqData map[string]interface{}) bool {
 			userIDList = append(userIDList, friendUserID)
 			phoneList = append(phoneList, friendPhone)
 		}
-		fmt.Println(phoneList)
+		//fmt.Println(phoneList)
 		for index, distphone := range phoneList {
 			friend := &rp.Friend{
 				UserID:   proto.Int64(userIDList[index]),
@@ -500,14 +502,16 @@ func (h *Handler) setUser(fd uint32, reqData map[string]interface{}) bool {
 				"phone":    phone,
 				"items":    result["items"],
 			}
-			h.msf.SessionMaster.WriteByPhone(distphone, h.msf.BsonData.Set(distMsg, notifySetuser))
+			if ok := h.msf.SessionMaster.GetPhoneOnline(distphone); ok {
+				h.msf.SessionMaster.WriteByPhone(distphone, h.msf.BsonData.Set(distMsg, notifySetuser))
+			}
 		}
 		return true
 	}
 	return false
 }
 
-func (h *Handler) selfInfo(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) selfInfo(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {
 		result := make(map[string]interface{})
@@ -546,12 +550,12 @@ func (h *Handler) selfInfo(fd uint32, reqData map[string]interface{}) bool {
 			}
 		}
 		result["phone"] = phone
-		h.msf.SessionMaster.WriteByID(fd, h.msf.BsonData.Set(result, rspSelfInfo))
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspSelfInfo))
 		return true
 	}
 	return false
 }
-func (h *Handler) c2cMessage(fd uint32, reqData map[string]interface{}) bool {
+func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {
 		result := make(map[string]interface{})

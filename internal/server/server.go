@@ -52,7 +52,7 @@ func (m *Msf) Listening() {
 			atomic.AddUint32(&fd, ^uint32(1000))
 		}
 		newfd := atomic.AddUint32(&fd, uint32(1))
-		cid := fmt.Sprintf("%d%d", time.Now().Unix(), newfd)
+		cid := fmt.Sprintf("%d%d", time.Now().UnixNano()/1e6, newfd)
 		m.SessionMaster.SetSession(cid, conn)
 		go m.ConnHandle(m, m.SessionMaster.GetSessionByCID(cid))
 	}
@@ -93,7 +93,7 @@ func (m *Msf) ConnHandle(msf *Msf, sess *Session) {
 			continue
 		}
 		if ok := m.hook(sess.CID, cmdid, v); !ok {
-			log.Println("hook error cmdid ", cmdid)
+			log.Println("handle message error cmdid = ", cmdid)
 		}
 	}
 

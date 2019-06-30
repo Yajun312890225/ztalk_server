@@ -84,7 +84,7 @@ func (b *Bson) initStrTab() error {
 //Set map[string] inerface{}
 func (b *Bson) Set(data map[string]interface{}, cmdid int16) []byte {
 	bsonbuf := new(bytes.Buffer)
-	obj := b.transFromMap(&data)
+	obj := b.TransFromMap(&data)
 	len := int32(len(obj.Bytes()) + 11)
 	value := new(bytes.Buffer)
 	binary.Write(value, binary.LittleEndian, &len)
@@ -105,7 +105,8 @@ func (b *Bson) Set(data map[string]interface{}, cmdid int16) []byte {
 	return bsonbuf.Bytes()
 }
 
-func (b *Bson) transFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
+//TransFromMap trans
+func (b *Bson) TransFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
 	obj.WriteByte(objectValue)
 	for key, value := range *data {
 		obj.WriteByte(stridxValue)
@@ -134,14 +135,21 @@ func (b *Bson) transFromMap(data *map[string]interface{}) (obj bytes.Buffer) {
 		case byte:
 			obj.WriteByte(byteValue)
 			obj.WriteByte(v)
+		case []byte:
+			obj.WriteByte(binaryValue)
+			buf := new(bytes.Buffer)
+			v32 := int32(len(v))
+			binary.Write(buf, binary.LittleEndian, &v32)
+			obj.Write(buf.Bytes())
+			obj.Write(v)
 		case map[string]interface{}:
-			by := b.transFromMap(&v)
+			by := b.TransFromMap(&v)
 			obj.Write(by.Bytes())
 		case []map[string]interface{}:
 			obj.WriteByte(arrayValue)
 			if len(v) != 0 {
 				for _, arr := range v {
-					by := b.transFromMap(&arr)
+					by := b.TransFromMap(&arr)
 					obj.Write(by.Bytes())
 				}
 			}

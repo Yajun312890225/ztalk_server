@@ -220,7 +220,7 @@ func (h *Handler) authMessage(cid string, reqData map[string]interface{}) bool {
 			log.Printf("scan failed, err:%v\n", err)
 			return false
 		}
-		_, err = (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", nickname, "iconresid", iconresid, "sdesc", sdesc, "logintime", time.Now().Unix(), "online", true)
+		_, err = (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", nickname, "iconresid", iconresid, "sdesc", sdesc, "setonline", "0", "seticon", "0", "setsdesc", "0", "logintime", time.Now().Unix(), "online", true)
 		if err != nil {
 			log.Println("redis HSETZUR error:", err)
 		}
@@ -253,17 +253,17 @@ func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 					if err != nil {
 						log.Printf("User not exist\n")
 						//redis friend reg == false
-						friend := &rp.Friend{
-							UserID:   proto.Int64(-1),
-							Contact:  proto.Bool(true),
-							Reg:      proto.Bool(false),
-							LastTime: proto.Int64(time.Now().Unix()),
-						}
-						d, _ := proto.Marshal(friend)
-						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
-						if err != nil {
-							log.Println("redis HGET error:", err)
-						}
+						// friend := &rp.Friend{
+						// 	UserID:   proto.Int64(-1),
+						// 	Contact:  proto.Bool(true),
+						// 	Reg:      proto.Bool(false),
+						// 	LastTime: proto.Int64(time.Now().Unix()),
+						// }
+						// d, _ := proto.Marshal(friend)
+						// _, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						// if err != nil {
+						// 	log.Println("redis HGET error:", err)
+						// }
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "friend", time.Now().Unix(), "friend", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
@@ -296,17 +296,17 @@ func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 					err := h.db.QueryOne(s).Scan(&friendUserID)
 					if err != nil {
 						log.Printf("User not exist\n")
-						friend := &rp.Friend{
-							UserID:   proto.Int64(-1),
-							Contact:  proto.Bool(false),
-							Reg:      proto.Bool(false),
-							LastTime: proto.Int64(time.Now().Unix()),
-						}
-						d, _ := proto.Marshal(friend)
-						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
-						if err != nil {
-							log.Println("redis HSET error:", err)
-						}
+						// friend := &rp.Friend{
+						// 	UserID:   proto.Int64(-1),
+						// 	Contact:  proto.Bool(false),
+						// 	Reg:      proto.Bool(false),
+						// 	LastTime: proto.Int64(time.Now().Unix()),
+						// }
+						// d, _ := proto.Marshal(friend)
+						// _, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						// if err != nil {
+						// 	log.Println("redis HSET error:", err)
+						// }
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "deleted", time.Now().Unix(), "deleted", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
@@ -463,7 +463,7 @@ func (h *Handler) setUser(cid string, reqData map[string]interface{}) bool {
 		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspSetUser))
 
 		//notify_setUser
-		q := fmt.Sprintf("SELECT t2.fUserId, t2.fPhone FROM tcontact t1,tuser t2 WHERE t1.fUserId = t2.fUserId  AND t1.fContactType ='friend' AND t1.fFriendUserId IN (SELECT fUserId FROM tuser WHERE fPhone = '%s' )", "+8617600113331")
+		q := fmt.Sprintf("SELECT t2.fUserId, t2.fPhone FROM tcontact t1,tuser t2 WHERE t1.fUserId = t2.fUserId  AND t1.fContactType ='friend' AND t1.fFriendUserId IN (SELECT fUserId FROM tuser WHERE fPhone = '%s' )", phone)
 		rows, err := h.db.Query(q)
 		if err != nil {
 			log.Printf("Query failed,err:%v", err)
@@ -517,7 +517,7 @@ func (h *Handler) selfInfo(cid string, reqData map[string]interface{}) bool {
 		result := make(map[string]interface{})
 		result["items"] = []map[string]interface{}{}
 		if items, ok := reqData["items"].([]map[string]interface{}); ok {
-			userProfile, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+phone, "nickname", "iconresid", "sdesc"))
+			userProfile, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+phone, "nickname", "seticon", "iconresid", "setsdesc", "sdesc"))
 			if err != nil {
 				log.Println("redis HGET error:", err)
 				return false
@@ -535,15 +535,30 @@ func (h *Handler) selfInfo(cid string, reqData map[string]interface{}) bool {
 					})
 
 				case "icon":
-					result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
-						"name":  name,
-						"value": string(userProfile[1]),
-					})
+					if string(userProfile[1]) == "0" {
+						result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+							"name":  name,
+							"value": string(userProfile[2]),
+						})
+					} else {
+						result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+							"name":  name,
+							"value": "",
+						})
+					}
+
 				case "sdesc":
-					result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
-						"name":  name,
-						"value": string(userProfile[2]),
-					})
+					if string(userProfile[3]) == "0" {
+						result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+							"name":  name,
+							"value": string(userProfile[4]),
+						})
+					} else {
+						result["items"] = append(result["items"].([]map[string]interface{}), map[string]interface{}{
+							"name":  name,
+							"value": "",
+						})
+					}
 				default:
 					log.Println("items name error")
 				}
@@ -557,10 +572,195 @@ func (h *Handler) selfInfo(cid string, reqData map[string]interface{}) bool {
 }
 func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
+
+	result := make(map[string]interface{})
+
+	from, ok := reqData["from"].(string)
+	if ok == false {
+		log.Println("from phone not found")
+		return false
+	}
+	to, ok := reqData["to"].(string)
+	if ok == false {
+		log.Println("to phone not found")
+		return false
+	}
+	seqid, ok := reqData["seqid"].(string)
+	if ok == false {
+		log.Println("seqid not found")
+		return false
+	}
+	//校验好友关系
+	// friend := &rp.Friend{}
+	// fData, err := redis.Bytes((*h.redisConn).Do("HGET", "ZUC_"+from, to))
+	// if err != nil {
+	// 	log.Println("redis HGET error:", err)
+	// 	return false
+	// }
+	// err = proto.Unmarshal(fData, friend)
+	// if err != nil {
+	// 	log.Println("proto Unmarshal error:", err)
+	// 	return false
+	// }
+	// if *friend.Contact == false || *friend.Reg == false {
+	// 	result["to"] = to
+	// 	result["seqid"] = seqid
+	// 	h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, failC2Cmsg))
+	// 	return true
+	// }
+
+	contentType, ok := reqData["type"].(int)
+	if ok == false {
+		log.Println("type not found")
+		return false
+	}
+	content, ok := reqData["content"].([]byte)
+	if ok == false {
+		log.Println("content not found")
+		return false
+	}
+	result["to"] = to
+	result["seqid"] = seqid
+	result["msgid"] = strconv.FormatInt(time.Now().Unix(), 10) + cid
+	h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, askC2Cmsg))
+
+	msginfo := map[string]interface{}{
+		"msgid":   result["msgid"],
+		"msgtime": time.Now().Unix(),
+		"from":    from,
+		"to":      to,
+		"type":    contentType,
+		"content": content,
+	}
+	binaryData := h.msf.BsonData.TransFromMap(&msginfo)
+	notify := map[string]interface{}{}
+	notify["msglist"] = []map[string]interface{}{}
+	notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
+		"msgtype": 0x0001,
+		"msginfo": binaryData.Bytes(),
+	})
+
+	if ok := h.msf.SessionMaster.GetPhoneOnline(to); ok {
+		//在线
+		log.Println(to, "is online")
+		h.msf.SessionMaster.WriteByPhone(to, h.msf.BsonData.Set(notify, notifyMsg))
+	} else {
+		//离线库
+		log.Println(to, "is not online")
+		u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%s',FROM_UNIXTIME(%d))", to, result["msgid"], 0x0001, binaryData.Bytes(), time.Now().Unix())
+		// fmt.Println(u)
+		if ok = h.db.UpdateData(u); ok {
+			log.Println("offmsg insert success")
+		}
+	}
+	return true
+
+}
+
+func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) bool {
+	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {
-		result := make(map[string]interface{})
-		result["nonce"] = "Wa hahaha"
-		h.msf.SessionMaster.WriteByPhone(phone, h.msf.BsonData.Set(result, notifyMsg))
+		if msgs, ok := reqData["msglist"].([]map[string]interface{}); ok {
+			for _, msg := range msgs {
+				notify := map[string]interface{}{}
+				notify["msglist"] = []map[string]interface{}{}
+				msgid, ok := msg["msgid"].(string)
+				if ok == false {
+					log.Println("msgid not exist")
+					return false
+				}
+				to, ok := msg["to"].(string)
+				if ok == false {
+					log.Println("to not exist")
+					return false
+				}
+				msgtype, ok := msg["msgid"].(int)
+				if ok == false {
+					log.Println("msgtype not exist")
+					return false
+				}
+				switch msgtype {
+				case 0x0001:
+					//C2C
+					msginfo := map[string]interface{}{
+						"msgid": strconv.FormatInt(time.Now().Unix(), 10) + cid,
+					}
+					msginfo["recylist"] = []map[string]interface{}{}
+
+					msginfo["recylist"] = append(msginfo["recylist"].([]map[string]interface{}), map[string]interface{}{
+						"msgid": msgid,
+						"to":    phone,
+					})
+					binaryData := h.msf.BsonData.TransFromMap(&msginfo)
+
+					notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
+						"msgtype": 0x000A,
+						"msginfo": binaryData.Bytes(),
+					})
+
+					if ok := h.msf.SessionMaster.GetPhoneOnline(to); ok {
+						//在线
+						log.Println(to, "is online")
+						h.msf.SessionMaster.WriteByPhone(to, h.msf.BsonData.Set(notify, notifyMsg))
+					} else {
+						//离线库
+						log.Println(to, "is not online")
+						u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%s',FROM_UNIXTIME(%d))", to, msginfo["msgid"], 0x000A, binaryData.Bytes(), time.Now().Unix())
+						fmt.Println(u)
+						if ok = h.db.UpdateData(u); ok {
+							log.Println("offmsg insert success")
+						}
+					}
+				default:
+					log.Println("msgtype error")
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	if phone, ok := reqData["phone"].(string); ok {
+		msglist, ok := reqData["msglist"].([]map[string]interface{})
+		if ok == false {
+			log.Println("msglist not exist")
+			return false
+		}
+		notify := map[string]interface{}{}
+		notify["msglist"] = []map[string]interface{}{}
+		if len(msglist) != 0 {
+			for _, msg := range msglist {
+				if msgid, ok := msg["msgid"].(string); ok {
+					del := fmt.Sprintf("DELETE FROM toffmsg WHERE fphone='%s' AND fMsgId= '%s'", phone, msgid)
+					if ok = h.db.UpdateData(del); ok {
+						log.Println("offmsg delete success")
+					}
+				}
+			}
+		}
+		q := fmt.Sprintf("SELECT fMsgType ,fMsgInfo FROM toffmsg WHERE fPhone = '%s' LIMIT 0,5", phone)
+		rows, err := h.db.Query(q)
+		if err != nil {
+			log.Printf("Query failed,err:%v", err)
+			return false
+		}
+		for rows.Next() {
+			var msgtype int
+			var msginfo []byte
+			err = rows.Scan(&msgtype, &msginfo)
+			if err != nil {
+				fmt.Printf("Scan failed,err:%v", err)
+				return false
+			}
+			notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
+				"msgtype": msgtype,
+				"msginfo": msginfo,
+			})
+		}
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(notify, rspOffmsg))
 		return true
 	}
 	return false

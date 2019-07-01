@@ -47,7 +47,7 @@ func (d *DB) Query(q string) (*sql.Rows, error) {
 func (d *DB) UpdateData(execString string) bool {
 	result, err := d.db.Exec(execString)
 	if err != nil {
-		log.Printf("Insert failed,err:%v", err)
+		log.Printf("dbExec failed,err:%v", err)
 		return false
 	}
 	rowsaffected, err := result.RowsAffected()

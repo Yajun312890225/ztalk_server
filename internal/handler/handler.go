@@ -105,6 +105,8 @@ func NewHandler(msf *server.Msf, db *database.DB, ut *utils.Ut, red *redis.Conn)
 	msf.EventPool.Register(reqSetUser, handler.setUser)
 	msf.EventPool.Register(reqSelfInfo, handler.selfInfo)
 	msf.EventPool.Register(reqC2Cmsg, handler.c2cMessage)
+	msf.EventPool.Register(askNotify, handler.askNotifyMessage)
+	msf.EventPool.Register(reqOffmsg, handler.offMessage)
 	return &handler
 }
 
@@ -247,23 +249,26 @@ func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 		if add, ok := reqData["add"].([]interface{}); ok {
 			for _, arry := range add {
 				if friendPhone, ok := arry.(string); ok {
+					if friendPhone == phone {
+						continue
+					}
 					var friendUserID int64
 					s := fmt.Sprintf("SELECT fUserId FROM tuser WHERE fPhone='%s'", friendPhone)
 					err := h.db.QueryOne(s).Scan(&friendUserID)
 					if err != nil {
 						log.Printf("User not exist\n")
 						//redis friend reg == false
-						// friend := &rp.Friend{
-						// 	UserID:   proto.Int64(-1),
-						// 	Contact:  proto.Bool(true),
-						// 	Reg:      proto.Bool(false),
-						// 	LastTime: proto.Int64(time.Now().Unix()),
-						// }
-						// d, _ := proto.Marshal(friend)
-						// _, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
-						// if err != nil {
-						// 	log.Println("redis HGET error:", err)
-						// }
+						friend := &rp.Friend{
+							UserID:   proto.Int64(-1),
+							Contact:  proto.Bool(true),
+							Reg:      proto.Bool(false),
+							LastTime: proto.Int64(time.Now().Unix()),
+						}
+						d, _ := proto.Marshal(friend)
+						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						if err != nil {
+							log.Println("redis HGET error:", err)
+						}
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "friend", time.Now().Unix(), "friend", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
@@ -296,17 +301,17 @@ func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 					err := h.db.QueryOne(s).Scan(&friendUserID)
 					if err != nil {
 						log.Printf("User not exist\n")
-						// friend := &rp.Friend{
-						// 	UserID:   proto.Int64(-1),
-						// 	Contact:  proto.Bool(false),
-						// 	Reg:      proto.Bool(false),
-						// 	LastTime: proto.Int64(time.Now().Unix()),
-						// }
-						// d, _ := proto.Marshal(friend)
-						// _, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
-						// if err != nil {
-						// 	log.Println("redis HSET error:", err)
-						// }
+						friend := &rp.Friend{
+							UserID:   proto.Int64(-1),
+							Contact:  proto.Bool(false),
+							Reg:      proto.Bool(false),
+							LastTime: proto.Int64(time.Now().Unix()),
+						}
+						d, _ := proto.Marshal(friend)
+						_, err := (*h.redisConn).Do("HSET", "ZUC_"+phone, friendPhone, d)
+						if err != nil {
+							log.Println("redis HSET error:", err)
+						}
 					} else {
 						u := fmt.Sprintf("INSERT INTO tcontact(fUserId,fFriendUserId,fContactType ,fLastTime) VALUES(%d,%d,'%s',FROM_UNIXTIME(%d)) ON DUPLICATE KEY UPDATE fContactType = '%s',fLastTime = FROM_UNIXTIME(%d)", userID, friendUserID, "deleted", time.Now().Unix(), "deleted", time.Now().Unix())
 						if ok = h.db.UpdateData(u); ok {
@@ -328,6 +333,7 @@ func (h *Handler) syncContact(cid string, reqData map[string]interface{}) bool {
 			}
 		}
 		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspSyncContact))
+
 		return true
 	}
 	return false
@@ -387,29 +393,29 @@ func (h *Handler) userState(cid string, reqData map[string]interface{}) bool {
 	result := make(map[string]interface{})
 	if _, ok := reqData["phone"].(string); ok {
 		result["userstate"] = []map[string]interface{}{}
-		if contacts, ok := reqData["contacts"].([]string); ok {
+		if contacts, ok := reqData["contacts"].([]interface{}); ok {
 			for _, contact := range contacts {
-				user, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+contact, "setonline", "logouttime", "online"))
+				user, err := redis.ByteSlices((*h.redisConn).Do("HMGET", "ZUE_"+contact.(string), "setonline", "logouttime", "online"))
 				if err != nil {
 					log.Println("redis HGET error:", err)
 					return false
 				}
-				if string(user[0]) == "0" {
+				if string(user[0]) != "0" {
 					result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
 						"phone":  contact,
 						"status": -1,
 					})
 				} else {
-					if online, err := redis.Bool(user[3], err); err == nil && online {
+					if online, err := redis.Bool(user[2], err); err == nil && online {
 						result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
 							"phone":  contact,
 							"status": 0,
 						})
 					} else {
-						if logouttime, err := redis.Int64(user[2], err); err == nil {
+						if logouttime, err := redis.Int64(user[1], err); err == nil {
 							result["userstate"] = append(result["userstate"].([]map[string]interface{}), map[string]interface{}{
 								"phone":  contact,
-								"status": int(logouttime),
+								"status": int(time.Now().Unix() - logouttime),
 							})
 						}
 					}
@@ -439,17 +445,47 @@ func (h *Handler) setUser(cid string, reqData map[string]interface{}) bool {
 					log.Println("value error")
 				}
 				userData[name] = value
-			}
-			e := fmt.Sprintf("UPDATE tuser SET fNickname='%s', fIconresid='%s' , fSdesc='%s' WHERE fPhone='%s'", userData["nick"], userData["icon"], userData["sdesc"], phone)
-			ok = h.db.UpdateData(e)
-			if ok == false {
-				log.Println("set user error")
-				return false
-			}
-			_, err := (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", userData["nick"], "iconresid", userData["icon"], "sdesc", userData["sdesc"])
-			if err != nil {
-				log.Println("redis HMSET error:", err)
-				return false
+
+				switch name {
+				case "nick":
+					e := fmt.Sprintf("UPDATE tuser SET fNickname='%s' WHERE fPhone='%s'", value, phone)
+					ok = h.db.UpdateData(e)
+					if ok == false {
+						log.Println("set user error")
+						return false
+					}
+					_, err := (*h.redisConn).Do("HMSET", "ZUE_"+phone, "nickname", value)
+					if err != nil {
+						log.Println("redis HMSET error:", err)
+						return false
+					}
+				case "icon":
+					e := fmt.Sprintf("UPDATE tuser SET fIconresid='%s' WHERE fPhone='%s'", value, phone)
+					ok = h.db.UpdateData(e)
+					if ok == false {
+						log.Println("set user error")
+						return false
+					}
+					_, err := (*h.redisConn).Do("HMSET", "ZUE_"+phone, "iconresid", value)
+					if err != nil {
+						log.Println("redis HMSET error:", err)
+						return false
+					}
+				case "sdesc":
+					e := fmt.Sprintf("UPDATE tuser SET fSdesc='%s' WHERE fPhone='%s'", value, phone)
+					ok = h.db.UpdateData(e)
+					if ok == false {
+						log.Println("set user error")
+						return false
+					}
+					_, err := (*h.redisConn).Do("HMSET", "ZUE_"+phone, "sdesc", value)
+					if err != nil {
+						log.Println("redis HMSET error:", err)
+						return false
+					}
+				default:
+					log.Println("user name error")
+				}
 			}
 
 			for k, v := range userData {
@@ -724,14 +760,7 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {
-		msglist, ok := reqData["msglist"].([]map[string]interface{})
-		if ok == false {
-			log.Println("msglist not exist")
-			return false
-		}
-		notify := map[string]interface{}{}
-		notify["msglist"] = []map[string]interface{}{}
-		if len(msglist) != 0 {
+		if msglist, ok := reqData["msglist"].([]map[string]interface{}); ok {
 			for _, msg := range msglist {
 				if msgid, ok := msg["msgid"].(string); ok {
 					del := fmt.Sprintf("DELETE FROM toffmsg WHERE fphone='%s' AND fMsgId= '%s'", phone, msgid)
@@ -741,6 +770,9 @@ func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 				}
 			}
 		}
+		notify := map[string]interface{}{}
+		notify["msglist"] = []map[string]interface{}{}
+
 		q := fmt.Sprintf("SELECT fMsgType ,fMsgInfo FROM toffmsg WHERE fPhone = '%s' LIMIT 0,5", phone)
 		rows, err := h.db.Query(q)
 		if err != nil {

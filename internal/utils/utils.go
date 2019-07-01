@@ -45,6 +45,9 @@ func (u *Ut) GetNonce() string {
 	bytes := make([]byte, 6)
 	for i := 0; i < 6; i++ {
 		b := u.r.Intn(78) + 48
+		if b == 92 || b == 96 {
+			b--
+		}
 		bytes[i] = byte(b)
 	}
 	return string(bytes)
@@ -55,7 +58,7 @@ func (u *Ut) GetPasswd() []byte {
 	bytes := make([]byte, 12)
 	for i := 0; i < 12; i++ {
 		b := u.r.Intn(78) + 48
-		if b == 92 {
+		if b == 92 || b == 96 {
 			b--
 		}
 		bytes[i] = byte(b)

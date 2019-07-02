@@ -627,23 +627,23 @@ func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 		return false
 	}
 	//校验好友关系
-	// friend := &rp.Friend{}
-	// fData, err := redis.Bytes((*h.redisConn).Do("HGET", "ZUC_"+from, to))
-	// if err != nil {
-	// 	log.Println("redis HGET error:", err)
-	// 	return false
-	// }
-	// err = proto.Unmarshal(fData, friend)
-	// if err != nil {
-	// 	log.Println("proto Unmarshal error:", err)
-	// 	return false
-	// }
-	// if *friend.Contact == false || *friend.Reg == false {
-	// 	result["to"] = to
-	// 	result["seqid"] = seqid
-	// 	h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, failC2Cmsg))
-	// 	return true
-	// }
+	friend := &rp.Friend{}
+	fData, err := redis.Bytes((*h.redisConn).Do("HGET", "ZUC_"+from, to))
+	if err != nil {
+		log.Println("redis HGET error:", err)
+		return false
+	}
+	err = proto.Unmarshal(fData, friend)
+	if err != nil {
+		log.Println("proto Unmarshal error:", err)
+		return false
+	}
+	if *friend.Contact == false || *friend.Reg == false {
+		result["to"] = to
+		result["seqid"] = seqid
+		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, failC2Cmsg))
+		return true
+	}
 
 	contentType, ok := reqData["type"].(int)
 	if ok == false {
@@ -679,7 +679,14 @@ func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 	if ok := h.msf.SessionMaster.GetPhoneOnline(to); ok {
 		//在线
 		log.Println(to, "is online")
-		h.msf.SessionMaster.WriteByPhone(to, h.msf.BsonData.Set(notify, notifyMsg))
+		msg := h.msf.BsonData.Set(notify, notifyMsg)
+		_, err := (*h.redisConn).Do("RPUSH", "ZS_"+from, msg)
+		if err != nil {
+			log.Println("redis RPUSH error:", err)
+			return false
+		}
+
+		h.msf.SessionMaster.WriteByPhone(to, msg)
 	} else {
 		//离线库
 		log.Println(to, "is not online")
@@ -718,6 +725,9 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 				switch msgtype {
 				case 0x0001:
 					//C2C
+					if ok = h.checkRedisMsg(phone, to, msgid); ok == false {
+						return false
+					}
 					msginfo := map[string]interface{}{
 						"msgid": strconv.FormatInt(time.Now().Unix(), 10) + cid,
 					}
@@ -737,7 +747,13 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 					if ok := h.msf.SessionMaster.GetPhoneOnline(to); ok {
 						//在线
 						log.Println(to, "is online")
-						h.msf.SessionMaster.WriteByPhone(to, h.msf.BsonData.Set(notify, notifyMsg))
+						msg := h.msf.BsonData.Set(notify, notifyMsg)
+						_, err := (*h.redisConn).Do("RPUSH", "ZS_"+phone, msg)
+						if err != nil {
+							log.Println("redis RPUSH error:", err)
+							return false
+						}
+						h.msf.SessionMaster.WriteByPhone(to, msg)
 					} else {
 						//离线库
 						log.Println(to, "is not online")
@@ -746,6 +762,11 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("offmsg insert success")
 						}
+					}
+				case 0x000A:
+					//recv
+					if ok := h.checkRedisMsg(phone, to, msgid); ok == false {
+						return false
 					}
 				default:
 					log.Println("msgtype error")
@@ -757,6 +778,47 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 	return false
 }
 
+func (h *Handler) checkRedisMsg(from, to, msgid string) bool {
+	bson, err := (*h.redisConn).Do("LPOP", "ZS_"+to)
+	if err != nil {
+		log.Println("redis LPOP error:", err)
+		return false
+	}
+	if bs, ok := bson.([]byte); ok {
+		data, _, err := h.msf.BsonData.Get(bs[11:])
+		if err != nil {
+			log.Println("bson data errpr:", err)
+			return false
+		}
+		if l, ok := data["msglist"].([]map[string]interface{}); ok {
+			for _, m := range l {
+				f, ok := m["from"].(string)
+				if ok == false {
+					log.Println("redis from error")
+					return false
+				}
+				id, ok := m["msgid"].(string)
+				if ok == false {
+					log.Println("redis msgid error")
+					return false
+				}
+				if id != msgid {
+					log.Println("redis msgid not match")
+					_, err := (*h.redisConn).Do("LPUSH", "ZS_"+to, bs)
+					if err != nil {
+						log.Println("redis LPUSH error:", err)
+					}
+					return false
+				}
+				if f != from {
+					log.Println("redis phone not match")
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
 func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 	log.Println(reqData)
 	if phone, ok := reqData["phone"].(string); ok {

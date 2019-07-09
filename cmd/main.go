@@ -14,6 +14,6 @@ func main() {
 	redisConn := database.NewRedis()
 	ser := server.NewMsf(redisConn)
 	ut := utils.NewUtils()
-	_ := handler.NewHandler(ser, db, ut, redisConn)
+	handler.NewHandler(ser, db, ut, redisConn)
 	ser.Listening()
 }

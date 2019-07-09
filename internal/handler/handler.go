@@ -662,7 +662,7 @@ func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 
 	msginfo := map[string]interface{}{
 		"msgid":   result["msgid"],
-		"msgtime": time.Now().Unix(),
+		"msgtime": int(time.Now().Unix()),
 		"from":    from,
 		"to":      to,
 		"type":    contentType,
@@ -717,7 +717,7 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 					log.Println("to not exist")
 					return false
 				}
-				msgtype, ok := msg["msgid"].(int)
+				msgtype, ok := msg["msgtype"].(int)
 				if ok == false {
 					log.Println("msgtype not exist")
 					return false

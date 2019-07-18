@@ -690,6 +690,7 @@ func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 	} else {
 		//离线库
 		log.Println(to, "is not online")
+		//fmt.Println(binaryData.Bytes())
 		u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%s',FROM_UNIXTIME(%d))", to, result["msgid"], 0x0001, binaryData.Bytes(), time.Now().Unix())
 		// fmt.Println(u)
 		if ok = h.db.UpdateData(u); ok {
@@ -731,9 +732,9 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 					msginfo := map[string]interface{}{
 						"msgid": strconv.FormatInt(time.Now().Unix(), 10) + cid,
 					}
-					msginfo["recylist"] = []map[string]interface{}{}
+					msginfo["recvlist"] = []map[string]interface{}{}
 
-					msginfo["recylist"] = append(msginfo["recylist"].([]map[string]interface{}), map[string]interface{}{
+					msginfo["recvlist"] = append(msginfo["recvlist"].([]map[string]interface{}), map[string]interface{}{
 						"msgid": msgid,
 						"to":    phone,
 					})
@@ -761,13 +762,17 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 						fmt.Println(u)
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("offmsg insert success")
+							return false
 						}
+
 					}
+					return true
 				case 0x000A:
 					//recv
 					if ok := h.checkRedisMsg(phone, to, msgid); ok == false {
 						return false
 					}
+					return true
 				default:
 					log.Println("msgtype error")
 				}
@@ -791,29 +796,81 @@ func (h *Handler) checkRedisMsg(from, to, msgid string) bool {
 			return false
 		}
 		if l, ok := data["msglist"].([]map[string]interface{}); ok {
+
 			for _, m := range l {
-				f, ok := m["from"].(string)
+				msgtype, ok := m["msgtype"].(int)
 				if ok == false {
-					log.Println("redis from error")
+					log.Println("redis msgtype error")
 					return false
 				}
-				id, ok := m["msgid"].(string)
+				msginfo, ok := m["msginfo"].([]byte)
 				if ok == false {
-					log.Println("redis msgid error")
+					log.Println("redis msginfo error")
 					return false
 				}
-				if id != msgid {
-					log.Println("redis msgid not match")
-					_, err := (*h.redisConn).Do("LPUSH", "ZS_"+to, bs)
-					if err != nil {
-						log.Println("redis LPUSH error:", err)
+
+				msginfoData, _, err := h.msf.BsonData.Get(msginfo)
+				if err != nil {
+					log.Println("bson data error:", err)
+					return false
+				}
+				switch msgtype {
+				case 0x0001:
+					f, ok := msginfoData["from"].(string)
+					if ok == false {
+						log.Println("redis from error")
+						return false
 					}
-					return false
+					id, ok := msginfoData["msgid"].(string)
+					if ok == false {
+						log.Println("redis msgid error")
+						return false
+					}
+					if id != msgid {
+						log.Println("redis msgid not match")
+						_, err := (*h.redisConn).Do("LPUSH", "ZS_"+to, bs)
+						if err != nil {
+							log.Println("redis LPUSH error:", err)
+						}
+						return false
+					}
+					if f != to {
+						log.Println("redis phone not match")
+						return false
+					}
+				case 0x000A:
+					recvlist, ok := msginfoData["recvlist"].([]map[string]interface{})
+					if ok == false {
+						log.Println("recvlist not found ")
+						return false
+					}
+					id, ok := msginfoData["msgid"].(string)
+					if ok == false {
+						log.Println("redis msgid error")
+						return false
+					}
+					if id != msgid {
+						log.Println("redis msgid not match")
+						_, err := (*h.redisConn).Do("LPUSH", "ZS_"+to, bs)
+						if err != nil {
+							log.Println("redis LPUSH error:", err)
+						}
+						return false
+					}
+					for _, v := range recvlist {
+						t, ok := v["to"].(string)
+						if ok == false {
+							log.Println("redis to error")
+							return false
+						}
+						if t != to {
+							log.Println("redis phone not match")
+							return false
+						}
+					}
+				default:
 				}
-				if f != from {
-					log.Println("redis phone not match")
-					return false
-				}
+
 			}
 		}
 	}
@@ -849,6 +906,7 @@ func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 				fmt.Printf("Scan failed,err:%v", err)
 				return false
 			}
+			//fmt.Println(msginfo)
 			notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
 				"msgtype": msgtype,
 				"msginfo": msginfo,

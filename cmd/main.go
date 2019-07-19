@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"ztalk_server/internal/database"
 	"ztalk_server/internal/handler"
 	"ztalk_server/internal/server"
@@ -10,6 +11,7 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.Lshortfile | log.LstdFlags)
 	db := database.NewDB()
 	redisConn := database.NewRedis()
 	ser := server.NewMsf(redisConn)

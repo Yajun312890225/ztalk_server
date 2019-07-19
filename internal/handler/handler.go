@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strconv"
@@ -107,6 +108,8 @@ func NewHandler(msf *server.Msf, db *database.DB, ut *utils.Ut, red *redis.Conn)
 	msf.EventPool.Register(reqC2Cmsg, handler.c2cMessage)
 	msf.EventPool.Register(askNotify, handler.askNotifyMessage)
 	msf.EventPool.Register(reqOffmsg, handler.offMessage)
+	msf.EventPool.Register(rptReadmsg, handler.readMsg)
+	msf.EventPool.Register(reqGroupList, handler.groupList)
 	return &handler
 }
 
@@ -691,7 +694,7 @@ func (h *Handler) c2cMessage(cid string, reqData map[string]interface{}) bool {
 		//离线库
 		log.Println(to, "is not online")
 		//fmt.Println(binaryData.Bytes())
-		u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%s',FROM_UNIXTIME(%d))", to, result["msgid"], 0x0001, binaryData.Bytes(), time.Now().Unix())
+		u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%x',FROM_UNIXTIME(%d))", to, result["msgid"], 0x0001, binaryData.Bytes(), time.Now().Unix())
 		// fmt.Println(u)
 		if ok = h.db.UpdateData(u); ok {
 			log.Println("offmsg insert success")
@@ -758,17 +761,21 @@ func (h *Handler) askNotifyMessage(cid string, reqData map[string]interface{}) b
 					} else {
 						//离线库
 						log.Println(to, "is not online")
-						u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%s',FROM_UNIXTIME(%d))", to, msginfo["msgid"], 0x000A, binaryData.Bytes(), time.Now().Unix())
+						u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%x',FROM_UNIXTIME(%d))", to, msginfo["msgid"], 0x000A, binaryData.Bytes(), time.Now().Unix())
 						fmt.Println(u)
 						if ok = h.db.UpdateData(u); ok {
 							log.Println("offmsg insert success")
-							return false
 						}
 
 					}
 					return true
 				case 0x000A:
 					//recv
+					if ok := h.checkRedisMsg(phone, to, msgid); ok == false {
+						return false
+					}
+					return true
+				case 0x000B:
 					if ok := h.checkRedisMsg(phone, to, msgid); ok == false {
 						return false
 					}
@@ -868,6 +875,36 @@ func (h *Handler) checkRedisMsg(from, to, msgid string) bool {
 							return false
 						}
 					}
+				case 0x000B:
+					readlist, ok := msginfoData["readlist"].([]map[string]interface{})
+					if ok == false {
+						log.Println("readlist not found ")
+						return false
+					}
+					id, ok := msginfoData["msgid"].(string)
+					if ok == false {
+						log.Println("redis msgid error")
+						return false
+					}
+					if id != msgid {
+						log.Println("redis msgid not match")
+						_, err := (*h.redisConn).Do("LPUSH", "ZS_"+to, bs)
+						if err != nil {
+							log.Println("redis LPUSH error:", err)
+						}
+						return false
+					}
+					for _, v := range readlist {
+						t, ok := v["to"].(string)
+						if ok == false {
+							log.Println("redis to error")
+							return false
+						}
+						if t != to {
+							log.Println("redis phone not match")
+							return false
+						}
+					}
 				default:
 				}
 
@@ -882,7 +919,71 @@ func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 		if msglist, ok := reqData["msglist"].([]map[string]interface{}); ok {
 			for _, msg := range msglist {
 				if msgid, ok := msg["msgid"].(string); ok {
-					del := fmt.Sprintf("DELETE FROM toffmsg WHERE fphone='%s' AND fMsgId= '%s'", phone, msgid)
+
+					var msgInfo string
+					var msgType int
+					qus := fmt.Sprintf("SELECT fMsgType,fMsgInfo FROM toffmsg WHERE fPhone = '%s' AND fMsgId='%s'", phone, msgid)
+					err := h.db.QueryOne(qus).Scan(&msgType, &msgInfo)
+					if err != nil {
+						log.Printf("scan failed, err:%v\n", err)
+						return false
+					}
+					msgInfoByte, err := hex.DecodeString(msgInfo)
+					if err != nil {
+						log.Printf("hex failed, err:%v\n", err)
+						return false
+					}
+					if msgType == 0x0001 {
+						msginfoData, _, err := h.msf.BsonData.Get(msgInfoByte)
+						if err != nil {
+							log.Println("bson data error:", err)
+							return false
+						}
+						from, ok := msginfoData["from"].(string)
+						if ok == false {
+							log.Println("redis from error")
+							return false
+						}
+
+						msginfo := map[string]interface{}{
+							"msgid": strconv.FormatInt(time.Now().Unix(), 10) + cid,
+						}
+						msginfo["recvlist"] = []map[string]interface{}{}
+
+						msginfo["recvlist"] = append(msginfo["recvlist"].([]map[string]interface{}), map[string]interface{}{
+							"msgid": msgid,
+							"to":    phone,
+						})
+						binaryData := h.msf.BsonData.TransFromMap(&msginfo)
+						notify := map[string]interface{}{}
+						notify["msglist"] = []map[string]interface{}{}
+						notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
+							"msgtype": 0x000A,
+							"msginfo": binaryData.Bytes(),
+						})
+
+						if ok := h.msf.SessionMaster.GetPhoneOnline(from); ok {
+							//在线
+							log.Println(from, "is online")
+							msg := h.msf.BsonData.Set(notify, notifyMsg)
+							_, err := (*h.redisConn).Do("RPUSH", "ZS_"+phone, msg)
+							if err != nil {
+								log.Println("redis RPUSH error:", err)
+								return false
+							}
+							h.msf.SessionMaster.WriteByPhone(from, msg)
+						} else {
+							//离线库
+							log.Println(from, "is not online")
+							u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%x',FROM_UNIXTIME(%d))", from, msginfo["msgid"], 0x000A, binaryData.Bytes(), time.Now().Unix())
+							//fmt.Println(u)
+							if ok = h.db.UpdateData(u); ok {
+								log.Println("offmsg insert success")
+							}
+						}
+
+					}
+					del := fmt.Sprintf("DELETE FROM toffmsg WHERE fPhone='%s' AND fMsgId= '%s'", phone, msgid)
 					if ok = h.db.UpdateData(del); ok {
 						log.Println("offmsg delete success")
 					}
@@ -900,20 +1001,104 @@ func (h *Handler) offMessage(cid string, reqData map[string]interface{}) bool {
 		}
 		for rows.Next() {
 			var msgtype int
-			var msginfo []byte
+			var msginfo string
 			err = rows.Scan(&msgtype, &msginfo)
 			if err != nil {
 				fmt.Printf("Scan failed,err:%v", err)
 				return false
 			}
 			//fmt.Println(msginfo)
+			msginfoByte, err := hex.DecodeString(msginfo)
+			if err != nil {
+				log.Printf("hex failed, err:%v\n", err)
+				return false
+			}
 			notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
 				"msgtype": msgtype,
-				"msginfo": msginfo,
+				"msginfo": msginfoByte,
 			})
 		}
 		h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(notify, rspOffmsg))
 		return true
 	}
+	return false
+}
+
+func (h *Handler) readMsg(cid string, reqData map[string]interface{}) bool {
+	log.Println(reqData)
+	if phone, ok := reqData["phone"].(string); ok {
+		to, ok := reqData["to"].(string)
+		if ok == false {
+			log.Println("readMsg to error")
+			return false
+		}
+		msgtype, ok := reqData["msgtype"].(int)
+		if ok == false {
+			log.Println("readMsg msgtype error")
+			return false
+		}
+		msglist, ok := reqData["msglist"].([]map[string]interface{})
+		if ok == false {
+			log.Println("readMsg msglist error")
+			return false
+		}
+
+		for _, msg := range msglist {
+			notify := map[string]interface{}{}
+			notify["msglist"] = []map[string]interface{}{}
+			if msgtype == 0x0001 {
+				msgid, ok := msg["msgid"].(string)
+				if ok == false {
+					log.Println("msgid error")
+					return false
+				}
+				msginfo := map[string]interface{}{
+					"msgid": strconv.FormatInt(time.Now().Unix(), 10) + cid,
+				}
+				msginfo["readlist"] = []map[string]interface{}{}
+
+				msginfo["readlist"] = append(msginfo["readlist"].([]map[string]interface{}), map[string]interface{}{
+					"msgid": msgid,
+					"to":    phone,
+				})
+				binaryData := h.msf.BsonData.TransFromMap(&msginfo)
+				notify["msglist"] = append(notify["msglist"].([]map[string]interface{}), map[string]interface{}{
+					"msgtype": 0x000B,
+					"msginfo": binaryData.Bytes(),
+				})
+
+				if ok := h.msf.SessionMaster.GetPhoneOnline(to); ok {
+					//在线
+					log.Println(to, "is online")
+					msg := h.msf.BsonData.Set(notify, notifyMsg)
+					_, err := (*h.redisConn).Do("RPUSH", "ZS_"+phone, msg)
+					if err != nil {
+						log.Println("redis RPUSH error:", err)
+						return false
+					}
+					h.msf.SessionMaster.WriteByPhone(to, msg)
+				} else {
+					//离线库
+					log.Println(to, "is not online")
+					u := fmt.Sprintf("INSERT INTO toffmsg(fPhone,fMsgId,fMsgType,fMsgInfo,fCreateTime) VALUES('%s','%s',%d,'%x',FROM_UNIXTIME(%d))", to, msginfo["msgid"], 0x000B, binaryData.Bytes(), time.Now().Unix())
+					//fmt.Println(u)
+					if ok = h.db.UpdateData(u); ok {
+						log.Println("offmsg insert success")
+					}
+				}
+			}
+		}
+
+	}
+
+	return true
+}
+func (h *Handler) groupList(cid string, reqData map[string]interface{}) bool {
+
+	result := make(map[string]interface{})
+	result["grouplisttime"] = time.Now().Unix()
+	result["endflag"] = true
+	result["grouplist"] = []map[string]interface{}{}
+	h.msf.SessionMaster.WriteByCID(cid, h.msf.BsonData.Set(result, rspGroupList))
 	return false
 }
